@@ -890,7 +890,7 @@ begin
 
   // 青空文库 ルビ → XHTML ruby
   // ｜かんじ《よみ》 → <ruby>かんじ<rt>よみ</rt></ruby>
-  tmp := ReplaceRegExpr('([^《]*?)《([^》]*?)》', tmp, '<ruby>$1<rt>$2</rt></ruby>');
+  tmp := ReplaceRegExpr('([^《]*?)《([^》]*?)》', tmp, '<ruby>$1<rt>$2</rt></ruby>', True);
   // 去掉青空文库格式标签
   tmp := ReplaceRegExpr('［＃[^］]*］', tmp, '');
   // ｜ 去残留
