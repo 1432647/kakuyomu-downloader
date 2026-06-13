@@ -1,35 +1,92 @@
-### kakuyomu-downloader
-kakuyomudlはカクヨムで公開されている小説を青空文庫形式のテキストファイルでダウンロードするためのツールです。<br>
-**※カクヨムネクスト等の有料作品はダウンロード出来ません。**<br>
+# kakuyomudl
 
-### 動作環境
-Windows10/11上のコマンドプロンプト上で動作します。
+Kakuyomu (カクヨム) 小说下载器 — 将公开小说保存为 EPUB 或青空文库格式 TXT。
 
-### 実行ファイルの作り方
-ver4.0からDelphi/Lazarusどちらからでもビルド出来るようにしました。<br>
-- Delphi (XE2以降)の場合はkakuyomudl.dprojを開いてビルドしてください。<br>
-- Lazarus (3.0以降)の場合はkakuyomudl.lpiを開いてビルドしてください。<br>
+[![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)](LICENSE)
 
-尚、ビルドするためにはTRegExprの最新版が必要です。TRegExprは https://github.com/andgineer/TRegExpr から取得してください。srcフォルダー内のregexpr.pas、regexpr_compilers.inc、regexpr_unicodedata.pasの3つのファイルをkakuyomudlプロジェクトソースファイルと同じフォルダにコピーして下さい。
+## 功能
 
-#### バージョン情報を編集したい場合
-verinfo.rcファイルをテキストファイルとして開いて編集してください。尚、編集後は文字コードをShift-JISとして保存する必要があります。<br>
-編集後はコマンドラインから、rc verinfo.rcを実行すればバージョン情報リソースファイルverinfo.resが作成されます。rc.exeはDelphiやVisual Studioをインストールしていればパスが通たフォルダー内に存在しているはずです。
+- **交互式 CLI** — 直接运行，按提示输入，无需记忆命令行参数
+- **章节选择** — 扫描小说结构后展示卷列表，可选择下载特定卷
+- **EPUB 输出** — 合并为单本或按卷拆分，支持层级目录导航
+- **青空文库 TXT** — 保留原版格式输出
+- **中文界面** — 全中文化提示与错误信息
 
+## 下载
+
+在 [Releases](https://github.com/1432647/kakuyomu-downloader/releases) 或 [Actions → Artifacts](https://github.com/1432647/kakuyomu-downloader/actions) 中下载 `kakuyomudl`。
+
+## 使用方法
+
+双击运行 `kakuyomudl.exe`，按提示操作：
+
+```
+请输入小说作品URL: https://kakuyomu.jp/works/...
+
+书名: ○○○
+作者: ○○○
+共 XX 话
+
+卷列表:
+[1] 第一章 (12话)
+[2] 第二章 (15话)
+[0] 全部选择
+请选择要下载的卷:
+
+选择输出格式:
+[1] EPUB (推荐)
+[2] TXT (青空文库)
+```
+
+输出文件保存在 `kakuyomudl.exe` 同目录下的 `{小说名}/` 文件夹中。
+
+## 构建
+
+使用 Lazarus (Free Pascal) 编译：
+
+```bash
+lazbuild --build-mode=Release kakuyomudl.lpi
+```
+
+或通过 GitHub Actions 自动构建（提交代码即触发）。
+
+依赖 [TRegExpr](https://github.com/andgineer/TRegExpr)（`regexpr.pas` / `regexpr_compilers.inc` / `regexpr_unicodedata.pas`）已包含在仓库中。
+
+## 注意事项
+
+- 仅支持 Kakuyomu **公开免费**作品，付费作品无法下载
+- 下载内容请勿用于商业用途或未经授权的再分发
+- 下载的文本著作权归原作者所有
+
+## 许可
+
+- 原始代码 © 2021-2026 INOUE, masahiro (MIT License)
+- 修改部分 © 2026 1432647 (CC BY-NC 4.0)
+
+---
+
+## 日本語
+
+カクヨムで公開されている小説を EPUB または青空文庫形式のテキストでダウンロードするツールです。
+
+本フォークでは以下を追加しています：
+
+- 対話型 CLI（URL とオプションを順に入力）
+- 章・話の構成を表示してダウンロードする巻を選択可能
+- EPUB 出力（一括結合 / 巻ごと分割を選択可）
+- 中国語表示対応
 
 ### 使い方
-コマンドプロンプト上で、<br>
-kakuyomudl ダウンロードしたいアルファポリス小説トップページのURL (保存したいテキストファイル名)と入力して実行キーを押します。正常に実行されればkakuyomudl.exeがあるフォルダにダウンロードした小説が青空文庫形式のテキストファイルで保存されます。<br>
 
-尚、保存したファイル名の指定は省略できます。省略した場合はダウンロードした小説のタイトル名からファイル名を作成して保存します。<br>
-
-詳しい使い方は http://m-and-i.my.coocan.jp/freesoft/naro2mobi/%E5%A4%96%E9%83%A8%E3%83%80%E3%82%A6%E3%83%B3%E3%83%AD%E3%83%BC%E3%83%80%E3%83%BC%E3%81%AE%E4%BD%BF%E3%81%84%E6%96%B9.html を参照してください。
+`kakuyomudl.exe` を実行し、画面の指示に従って URL を入力してください。
 
 ### 禁止事項
-1. kakuyomudlを用いてWeb小 説サイトからダウンロードしたテキストファイルの第三者への販売や不特定多数への配信。 
-2. ダウンロードしたオリジナル作品を著作者の了解なく加工（文章の流用や作品の翻訳等）しての再公開。 
-3. その他、著作者の権利を踏みにじるような行為。 
 
+- ダウンロードしたテキストの第三者への販売・不特定多数への配信
+- 著作者の了解なく加工した作品の再公開
+- 商用利用
 
 ### ライセンス
-MIT
+
+- オリジナルコード © 2021-2026 INOUE, masahiro (MIT License)
+- 改変部分 © 2026 1432647 (CC BY-NC 4.0)
