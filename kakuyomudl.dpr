@@ -1279,18 +1279,11 @@ begin
     outDir := Path + FNBase + '\';
     ForceDirectories(outDir);
 
-    // ===== 阶段6: 下载并生成输出 =====
+    // ===== 阶段6: 下载 (使用原版 ParsePage) =====
     if totalEp > 0 then
     begin
-      if combineEpub and choseEpub then
-      begin
-        // 单本 EPUB
-        epub := TEpubBuilder.Create(outDir + FNBase + '.epub');
-        epub.SetMetadata(NovelTitle, NovelAuthor, 'kakuyomu.jp', NIntro);
-      end
-      else
-        epub := nil;
-
+      TextPage := TStringList.Create;
+      Chapter := '';
       cnt := PageList.Count;
       epIdx := 0;
       hCOutput := GetStdHandle(STD_OUTPUT_HANDLE);
@@ -1305,118 +1298,123 @@ begin
       begin
         if not selVols[i] then Continue;
 
-        if (not combineEpub) and choseEpub then
-        begin
-          // 每卷独立 EPUB
-          if ChapterGroups[i].Name <> '' then
-            epDir := ChapterGroups[i].Name
-          else
-            epDir := 'Vol' + IntToStr(i + 1);
-          epDir := PathFilter(epDir);
-          epub := TEpubBuilder.Create(outDir + epDir + '.epub');
-          epub.SetMetadata(NovelTitle + ' - ' + ChapterGroups[i].Name,
-                           NovelAuthor, 'kakuyomu.jp', NIntro);
-        end;
-
         for j := ChapterGroups[i].EpStart to ChapterGroups[i].EpStart + ChapterGroups[i].EpCount - 1 do
         begin
           epHtml := GetHTML(PageList[j]);
-          if epHtml = '' then Continue;
-
-          epHtml := ChangeAozoraTag(epHtml);
-
-          // 提取话标题 (对副本操作，不破坏 epHtml)
-          epTitle := '';
-          work := epHtml;
-          k := UTF8Pos(SEPISB, work);
-          if k > 1 then
-          begin
-            UTF8Delete(work, 1, k + UTF8Length(SEPISB) - 1);
-            k := UTF8Pos(SEPISE, work);
-            if k > 1 then
-              epTitle := TrimSpace(Restore2RealChar(UTF8Copy(work, 1, k - 1)));
-          end;
-          if epTitle = '' then
-            epTitle := '第' + IntToStr(j + 1) + '话';
-
-          // 提取正文 (使用与原版 ParsePage 相同的正则方式)
-          epBody := '';
-          r := TRegExpr.Create;
-          try
-            r.ModifierS := True;
-            r.InputString := epHtml;
-            r.Expression := '<p id="p1".*?</div>';
-            if r.Exec then
-              epBody := r.Match[0]
-            else begin
-              r.Expression := '<figure id="p1".*?</div>';
-              if r.Exec then
-                epBody := r.Match[0];
-            end;
-          finally
-            r.Free;
-          end;
-
-          epBody := ChangeBRK(epBody);
-          epBody := ChangeImage(epBody);
-          epBody := Delete_href(epBody);
-          epBody := ChangeRuby(epBody);
-          epBody := ElimBodyTag(epBody);
-          epBody := Restore2RealChar(epBody);
-
-          if choseEpub then
-          begin
-            epXhtml := AozoraToXHTML(epBody);
-            if ChapterGroups[i].Name <> '' then
-              epub.AddChapter('[' + ChapterGroups[i].Name + '] ' + epTitle, epXhtml)
-            else
-              epub.AddChapter(epTitle, epXhtml);
-          end
-          else begin
-            if TextPage = nil then
-              TextPage := TStringList.Create;
-            if ChapterGroups[i].Name <> '' then
-            begin
-              TextPage.Add(AO_CPB + ChapterGroups[i].Name + AO_CPE);
-              if ChapterGroups[i].SubName <> '' then
-                TextPage.Add(AO_PRB + ChapterGroups[i].SubName + AO_PRE);
-            end;
-            TextPage.Add(AO_SEB + epTitle + AO_SEE);
-            TextPage.Add(epBody);
-            TextPage.Add('');
-            TextPage.Add(AO_PB2);
-          end;
+          if epHtml <> '' then
+            ParsePage(epHtml);
 
           Inc(epIdx);
           SetConsoleCursorPosition(hCOutput, CSBI.dwCursorPosition);
           Write('正在下载 [' + Format('%3d', [epIdx]) + '/' + Format('%3d', [totalEp]) + '] (' + Format('%d', [(epIdx * 100) div totalEp]) + '%)');
           Sleep(400);
         end;
-
-        if (not combineEpub) and choseEpub and (epub <> nil) then
-        begin
-          epub.Save;
-          Writeln('');
-          Writeln('已保存: ' + epub.OutputPath);
-          epub.Free;
-          epub := nil;
-        end;
       end;
 
       CCI.bVisible := True;
       SetConsoleCursorInfo(hCoutput, CCI);
       Writeln('');
+    end;
 
-      if combineEpub and choseEpub and (epub <> nil) then
+    // ===== 阶段7: 输出 EPUB 或 TXT =====
+    if totalEp > 0 then
+    begin
+      if choseEpub then
       begin
-        epub.Save;
-        Writeln('已保存: ' + outDir + FNBase + '.epub');
-        epub.Free;
-      end;
+        // 从 TextPage (Aozora格式) 解析章节并生成 EPUB
+        if combineEpub then
+        begin
+          epub := TEpubBuilder.Create(outDir + FNBase + '.epub');
+          epub.SetMetadata(NovelTitle, NovelAuthor, 'kakuyomu.jp', NIntro);
+        end
+        else
+          epub := nil;
 
-      if not choseEpub then
-      begin
-        // TXT 输出
+        epTitle := '';
+        epBody := '';
+        k := 0;
+
+        for j := 0 to TextPage.Count - 1 do
+        begin
+          input := TextPage[j];
+
+          // AO_CPB (［＃大見出し］) = chapter heading
+          if UTF8Pos(AO_CPB, input) = 1 then
+          begin
+            // new volume: if split, save previous EPUB and start new one
+            if (not combineEpub) and (epub <> nil) then
+            begin
+              epub.Save;
+              Writeln('已保存: ' + epub.OutputPath);
+              epub.Free;
+              epub := nil;
+            end;
+
+            if not combineEpub then
+            begin
+              work := UTF8StringReplace(input, AO_CPB, '', [rfReplaceAll]);
+              work := UTF8StringReplace(work, AO_CPE, '', [rfReplaceAll]);
+              work := PathFilter(Trim(work));
+              if work <> '' then
+              begin
+                epub := TEpubBuilder.Create(outDir + work + '.epub');
+                epub.SetMetadata(NovelTitle + ' - ' + Trim(work), NovelAuthor, 'kakuyomu.jp', NIntro);
+              end;
+            end;
+            Continue;
+          end;
+
+          // AO_SEB (［＃中見出し］) = episode heading
+          if UTF8Pos(AO_SEB, input) = 1 then
+          begin
+            // save previous episode
+            if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
+              epub.AddChapter(epTitle, AozoraToXHTML(epBody));
+
+            epTitle := UTF8StringReplace(input, AO_SEB, '', [rfReplaceAll]);
+            epTitle := UTF8StringReplace(epTitle, AO_SEE, '', [rfReplaceAll]);
+            epTitle := Trim(epTitle);
+            epBody := '';
+            Continue;
+          end;
+
+          // blank line or AO_PB2 = page break → end of episode body
+          if (input = '') or (UTF8Pos(AO_PB1, input) = 1) or (UTF8Pos(AO_PB2, input) = 1) then
+          begin
+            if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
+            begin
+              epub.AddChapter(epTitle, AozoraToXHTML(epBody));
+              epTitle := '';
+              epBody := '';
+            end;
+            Continue;
+          end;
+
+          // body line
+          if epBody <> '' then
+            epBody := epBody + #13#10;
+          epBody := epBody + input;
+        end;
+
+        // last episode
+        if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
+          epub.AddChapter(epTitle, AozoraToXHTML(epBody));
+
+        if (not combineEpub) and (epub <> nil) then
+        begin
+          epub.Save;
+          Writeln('已保存: ' + epub.OutputPath);
+          epub.Free;
+        end;
+
+        if combineEpub and (epub <> nil) then
+        begin
+          epub.Save;
+          Writeln('已保存: ' + epub.OutputPath);
+          epub.Free;
+        end;
+      end
+      else begin
         TextPage.WriteBOM := True;
         TextPage.SaveToFile(outDir + FNBase + '.txt', TEncoding.UTF8);
         Writeln('已保存: ' + outDir + FNBase + '.txt');
