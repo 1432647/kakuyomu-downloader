@@ -12,10 +12,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Lazarus
-        run: choco install lazarus -y --no-progress --limit-output
-
-      - name: Compile version resource
-        run: rc /r verinfo.rc
+        run: |
+          choco install lazarus -y --no-progress --limit-output
+          $lazarusDir = Get-ChildItem -Path "C:\" -Directory -Filter "lazarus*" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $lazarusDir) {
+            $lazarusDir = Get-ChildItem -Path "C:\Program Files" -Directory -Filter "lazarus*" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($lazarusDir) {
+            "$($lazarusDir.FullName)" | Out-File -Append -FilePath $env:GITHUB_PATH
+            Write-Host "Lazarus found at: $($lazarusDir.FullName)"
+          } else {
+            Write-Error "Cannot find Lazarus installation directory"
+            exit 1
+          }
 
       - name: Build (Release)
         run: lazbuild --build-mode=Release kakuyomudl.lpi
