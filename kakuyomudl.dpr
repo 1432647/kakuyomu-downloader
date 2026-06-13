@@ -516,6 +516,7 @@ begin
       UTF8Delete(Page, 1, UTF8Length(SEPISE) + ep);
       r := TRegExpr.Create;
       try
+        r.ModifierS := True;
         r.InputString := Page;
         r.Expression  := '<p id="p1".*?</div>';
         if r.Exec then
@@ -1342,6 +1343,7 @@ begin
           epBody := '';
           r := TRegExpr.Create;
           try
+            r.ModifierS := True;
             r.InputString := epHtml;
             r.Expression := '<p id="p1".*?</div>';
             if r.Exec then
