@@ -779,7 +779,7 @@ end;
 procedure QuickScanEpisodes;
 var
   i, sp, ep: integer;
-  html, ch1, ch2, etitle: string;
+  html, work, ch1, ch2, etitle: string;
 begin
   EpChapterNames := TStringList.Create;
   EpSubChapterNames := TStringList.Create;
@@ -794,27 +794,28 @@ begin
     ch2 := '';
     etitle := '';
 
-    sp := UTF8Pos(SCHAPTB, html);
+    work := html;
+    sp := UTF8Pos(SCHAPTB, work);
     if sp > 1 then
     begin
-      UTF8Delete(html, 1, sp + UTF8Length(SCHAPTB) - 1);
-      ep := UTF8Pos(SCHAPTE, html);
+      UTF8Delete(work, 1, sp + UTF8Length(SCHAPTB) - 1);
+      ep := UTF8Pos(SCHAPTE, work);
       if ep > 1 then
       begin
-        ch1 := UTF8Copy(html, 1, ep - 1);
+        ch1 := UTF8Copy(work, 1, ep - 1);
         ch1 := TrimSpace(ch1);
       end;
     end;
 
-    html := GetHTML(PageList[i]);
-    sp := UTF8Pos(SCHAPTB2, html);
+    work := html;
+    sp := UTF8Pos(SCHAPTB2, work);
     if sp > 1 then
     begin
-      UTF8Delete(html, 1, sp + UTF8Length(SCHAPTB2) - 1);
-      ep := UTF8Pos(SCHAPTE, html);
+      UTF8Delete(work, 1, sp + UTF8Length(SCHAPTB2) - 1);
+      ep := UTF8Pos(SCHAPTE, work);
       if ep > 1 then
       begin
-        ch2 := UTF8Copy(html, 1, ep - 1);
+        ch2 := UTF8Copy(work, 1, ep - 1);
         ch2 := TrimSpace(ch2);
       end;
     end;
@@ -1014,7 +1015,8 @@ var
   interactive, showDetail: Boolean;
   selVols: array of Boolean;
   volCount, totalEp: integer;
-  epHtml, epTitle, epBody, epXhtml: string;
+  epHtml, epTitle, epBody, epXhtml, work: string;
+  r: TRegExpr;
   epub: TEpubBuilder;
   combineEpub: Boolean;
   choseEpub: Boolean;
@@ -1119,7 +1121,7 @@ begin
     Writeln('书名: ' + NovelTitle);
     Writeln('作者: ' + NovelAuthor);
     if NIntro <> '' then
-      Writeln('简介: ' + Copy(NIntro, 1, 80) + '...');
+      Writeln('简介: ' + NIntro);
     Writeln('共 ' + IntToStr(PageList.Count) + ' 话');
     Writeln('');
 
@@ -1318,49 +1320,35 @@ begin
 
           epHtml := ChangeAozoraTag(epHtml);
 
-          // 提取话标题
+          // 提取话标题 (对副本操作，不破坏 epHtml)
           epTitle := '';
-          k := UTF8Pos(SEPISB, epHtml);
+          work := epHtml;
+          k := UTF8Pos(SEPISB, work);
           if k > 1 then
           begin
-            UTF8Delete(epHtml, 1, k + UTF8Length(SEPISB) - 1);
-            k := UTF8Pos(SEPISE, epHtml);
+            UTF8Delete(work, 1, k + UTF8Length(SEPISB) - 1);
+            k := UTF8Pos(SEPISE, work);
             if k > 1 then
-              epTitle := TrimSpace(Restore2RealChar(UTF8Copy(epHtml, 1, k - 1)));
+              epTitle := TrimSpace(Restore2RealChar(UTF8Copy(work, 1, k - 1)));
           end;
           if epTitle = '' then
             epTitle := '第' + IntToStr(j + 1) + '话';
 
-          // 删除标题段，提取正文
-          epHtml := GetHTML(PageList[j]);
-          epHtml := ChangeAozoraTag(epHtml);
-          k := UTF8Pos(SEPISB, epHtml);
-          if k > 1 then
-          begin
-            UTF8Delete(epHtml, 1, k + UTF8Length(SEPISB));
-            k := UTF8Pos(SEPISE, epHtml);
-            if k > 1 then
-              UTF8Delete(epHtml, 1, k + UTF8Length(SEPISE));
-          end;
-
+          // 提取正文 (使用与原版 ParsePage 相同的正则方式)
           epBody := '';
-          if UTF8Pos(SBODYB, epHtml) > 0 then
-          begin
-            k := UTF8Pos(SBODYB, epHtml);
-            UTF8Delete(epHtml, 1, k);
-            k := UTF8Pos(SBODYM, epHtml);
-            if k > 1 then UTF8Delete(epHtml, 1, k);
-            k := UTF8Pos(SBODYE, epHtml);
-            if k > 1 then epBody := UTF8Copy(epHtml, 1, k - 1);
-          end
-          else if UTF8Pos(SBODYB2, epHtml) > 0 then
-          begin
-            k := UTF8Pos(SBODYB2, epHtml);
-            UTF8Delete(epHtml, 1, k);
-            k := UTF8Pos(SBODYM, epHtml);
-            if k > 1 then UTF8Delete(epHtml, 1, k);
-            k := UTF8Pos(SBODYE, epHtml);
-            if k > 1 then epBody := UTF8Copy(epHtml, 1, k - 1);
+          r := TRegExpr.Create;
+          try
+            r.InputString := epHtml;
+            r.Expression := '<p id="p1".*?</div>';
+            if r.Exec then
+              epBody := r.Match[0]
+            else begin
+              r.Expression := '<figure id="p1".*?</div>';
+              if r.Exec then
+                epBody := r.Match[0];
+            end;
+          finally
+            r.Free;
           end;
 
           epBody := ChangeBRK(epBody);
