@@ -8,7 +8,11 @@ unit epubgen;
 interface
 
 uses
-  Classes, SysUtils, zipper;
+  {$IFDEF FPC}
+  Classes, SysUtils, LazUTF8, zipper,
+  {$ELSE}
+  System.Classes, System.SysUtils, LazUTF8wrap, zipper,
+  {$ENDIF}
 
 type
   TEpubBuilder = class
@@ -227,13 +231,13 @@ begin
     MS.WriteBuffer(Data[1], Length(Data));
   MS.Position := 0;
 
-  Entry := Z.Entries.Add;
+  Entry := TZipFileEntry(Z.Entries.Add);
   Entry.ArchiveFileName := ArchiveName;
   Entry.Stream := MS;
-  if Compress then
-    Entry.CompressionLevel := cldefault
+  if not Compress then
+    Entry.CompressionLevel := TCompressionLevel(0)
   else
-    Entry.CompressionLevel := clnone;
+    Entry.CompressionLevel := TCompressionLevel(2);
 end;
 
 procedure TEpubBuilder.Save;
