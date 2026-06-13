@@ -1378,19 +1378,17 @@ begin
             Continue;
           end;
 
-          // blank line or AO_PB2 = page break → end of episode body
-          if (input = '') or (UTF8Pos(AO_PB2, input) = 1) then
+          // AO_PB2 = page break → end of episode body
+          if UTF8Pos(AO_PB2, input) = 1 then
           begin
             if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
-            begin
               epub.AddChapter(epTitle, AozoraToXHTML(epBody));
-              epTitle := '';
-              epBody := '';
-            end;
+            epTitle := '';
+            epBody := '';
             Continue;
           end;
 
-          // body line
+          // body line (blank lines are part of the content)
           if epBody <> '' then
             epBody := epBody + #13#10;
           epBody := epBody + input;
