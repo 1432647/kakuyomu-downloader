@@ -82,7 +82,8 @@ uses
   {$ENDIF }
   Windows,
   regexpr,
-  UniHTML;
+  UniHTML,
+  epubgen;
 
 const
   // データ抽出用の識別タグ
@@ -178,6 +179,22 @@ var
   hWnd: THandle;
   CDS: TCopyDataStruct;
   StartN: integer;
+
+// 章节结构
+type
+  TChapterGroup = record
+    Name: string;
+    SubName: string;
+    EpCount: integer;
+    EpStart: integer;
+  end;
+
+var
+  ChapterGroups: array of TChapterGroup;
+  GroupCount: integer;
+  EpChapterNames: TStringList;
+  EpSubChapterNames: TStringList;
+  NTitle, NAuthor, NIntro, NAuthURL: string;
 
 // HTMLテキスト内のCR/LF(#$0D#$0A)を除去する
 function ElimCRLF(Base: string): string;
@@ -758,81 +775,290 @@ begin
     Result := '【完結】';
 end;
 
+// 快速扫描各话页面，提取章节结构（不下载正文）
+procedure QuickScanEpisodes;
 var
+  i, sp, ep: integer;
+  html, ch1, ch2, etitle: string;
+begin
+  EpChapterNames := TStringList.Create;
+  EpSubChapterNames := TStringList.Create;
+  SetLength(ChapterGroups, 0);
+  GroupCount := 0;
+
+  Write('正在扫描章节结构...');
+  for i := 0 to PageList.Count - 1 do
+  begin
+    html := GetHTML(PageList[i]);
+    ch1 := '';
+    ch2 := '';
+    etitle := '';
+
+    sp := UTF8Pos(SCHAPTB, html);
+    if sp > 1 then
+    begin
+      UTF8Delete(html, 1, sp + UTF8Length(SCHAPTB) - 1);
+      ep := UTF8Pos(SCHAPTE, html);
+      if ep > 1 then
+      begin
+        ch1 := UTF8Copy(html, 1, ep - 1);
+        ch1 := TrimSpace(ch1);
+      end;
+    end;
+
+    html := GetHTML(PageList[i]);
+    sp := UTF8Pos(SCHAPTB2, html);
+    if sp > 1 then
+    begin
+      UTF8Delete(html, 1, sp + UTF8Length(SCHAPTB2) - 1);
+      ep := UTF8Pos(SCHAPTE, html);
+      if ep > 1 then
+      begin
+        ch2 := UTF8Copy(html, 1, ep - 1);
+        ch2 := TrimSpace(ch2);
+      end;
+    end;
+
+    EpChapterNames.Add(ch1);
+    EpSubChapterNames.Add(ch2);
+  end;
+
+  // 构建卷分组
+  for i := 0 to PageList.Count - 1 do
+  begin
+    ch1 := EpChapterNames[i];
+    ch2 := EpSubChapterNames[i];
+
+    if GroupCount = 0 then
+    begin
+      SetLength(ChapterGroups, 1);
+      ChapterGroups[0].Name := ch1;
+      ChapterGroups[0].SubName := ch2;
+      ChapterGroups[0].EpCount := 1;
+      ChapterGroups[0].EpStart := 0;
+      GroupCount := 1;
+    end
+    else if (ChapterGroups[GroupCount - 1].Name = ch1) and
+            (ChapterGroups[GroupCount - 1].SubName = ch2) then
+    begin
+      ChapterGroups[GroupCount - 1].EpCount := ChapterGroups[GroupCount - 1].EpCount + 1;
+    end
+    else begin
+      SetLength(ChapterGroups, GroupCount + 1);
+      ChapterGroups[GroupCount].Name := ch1;
+      ChapterGroups[GroupCount].SubName := ch2;
+      ChapterGroups[GroupCount].EpCount := 1;
+      ChapterGroups[GroupCount].EpStart := i;
+      GroupCount := GroupCount + 1;
+    end;
+  end;
+
+  // 修复 EpStart: 重新计算累积起始位置
+  if GroupCount > 0 then
+  begin
+    ChapterGroups[0].EpStart := 0;
+    for i := 1 to GroupCount - 1 do
+      ChapterGroups[i].EpStart := ChapterGroups[i - 1].EpStart + ChapterGroups[i - 1].EpCount;
+  end;
+
+  Writeln(' 完成');
+end;
+
+// 青空文库格式 → EPUB XHTML body 转换
+function AozoraToXHTML(const src: string): string;
+var
+  tmp: string;
+  lines: TStringList;
   i: integer;
-  op, input: string;
-  interactive: Boolean;
+  line: string;
+begin
+  Result := '';
+  if src = '' then Exit;
+
+  tmp := src;
+
+  // 转义 HTML 实体（先处理&，再处理其他）
+  tmp := UTF8StringReplace(tmp, '&', '&amp;', [rfReplaceAll]);
+  tmp := UTF8StringReplace(tmp, '<', '&lt;', [rfReplaceAll]);
+  tmp := UTF8StringReplace(tmp, '>', '&gt;', [rfReplaceAll]);
+
+  // 青空文库 ルビ → XHTML ruby
+  // ｜かんじ《よみ》 → <ruby>かんじ<rt>よみ</rt></ruby>
+  tmp := ReplaceRegExpr('([^《]*?)《([^》]*?)》', tmp, '<ruby>$1<rt>$2</rt></ruby>');
+  // 去掉青空文库格式标签
+  tmp := ReplaceRegExpr('［＃[^］]*］', tmp, '');
+  // ｜ 去残留
+  tmp := UTF8StringReplace(tmp, '｜', '', [rfReplaceAll]);
+
+  // 分段
+  lines := TStringList.Create;
+  try
+    lines.Text := tmp;
+    for i := 0 to lines.Count - 1 do
+    begin
+      line := Trim(lines[i]);
+      if line <> '' then
+        lines[i] := '<p>' + line + '</p>'
+      else
+        lines[i] := '<br/>';
+    end;
+    Result := lines.Text;
+  finally
+    lines.Free;
+  end;
+end;
+
+// 仅提取小说信息（不写入 TextPage），返回提取成功与否
+function ParseNovelInfo(MainPage: string): Boolean;
+var
+  sp, ep: integer;
+  body, ss, ts, title: string;
+  r: TRegExpr;
+begin
+  Result := False;
+  NTitle := '';
+  NAuthor := '';
+  NIntro := '';
+  NAuthURL := '';
+
+  r := TRegExpr.Create;
+  try
+    r.Expression  := '<h1.*?<a title=.*?</body></html>';
+    r.InputString := MainPage;
+    if r.Exec then
+      body := r.Match[0]
+    else
+      body := MainPage;
+
+    r.Expression  := STITLEB;
+    r.InputString := body;
+    if r.Exec then
+    begin
+      sp := r.MatchPos[0];
+      UTF8Delete(body, 1, sp + r.MatchLen[0] - 1);
+      sp := UTF8Pos(STITLEE, body);
+      if sp > 1 then
+      begin
+        ss := UTF8Copy(body, 1, sp - 1);
+        while (ss[1] <= ' ') do
+          UTF8Delete(ss, 1, 1);
+        NTitle := Restore2Realchar(ss);
+        UTF8Delete(body, 1, sp + UTF8Length(STITLEE));
+
+        sp := UTF8Pos(SAUTHERB, body);
+        if sp > 1 then
+        begin
+          UTF8Delete(body, 1, sp + UTF8Length(SAUTHERB) - 1);
+          r.Expression  := SAUTHERM;
+          r.InputString := body;
+          if r.Exec then
+          begin
+            ep := r.MatchPos[0];
+            ts := UTF8Copy(body, 1, ep - 1);
+            NAuthURL := 'https://kakuyomu.jp' + ts;
+            UTF8Delete(body, 1, ep + r.MatchLen[0] - 1);
+            ep := UTF8Pos(SAUTHERE, body);
+            if ep > 1 then
+            begin
+              NAuthor := UTF8Copy(body, 1, ep - 1);
+              UTF8Delete(body, 1, ep + Length(SAUTHERE));
+            end;
+            body := ElimCRLF(body);
+
+            // 简介
+            r.Expression  := '"introduction":".*?",';
+            r.InputString := body;
+            if r.Exec then
+            begin
+              ts := r.Match[0];
+              ts := ReplaceRegExpr('"introduction":"', ts, '');
+              ts := ReplaceRegExpr('",', ts, '');
+              ts := UTF8StringReplace(ts, '\n', CRLF, [rfReplaceAll]);
+              ts := UTF8StringReplace(ts, '\"', '"', [rfReplaceAll]);
+              ts := ElimTag(ts);
+              ts := UTF8StringReplace(ts, '…続きを読む', '', [rfReplaceAll]);
+              ts := ChangeImage(ts);
+              ts := ChangeAozoraTag(ts);
+              ts := Restore2Realchar(ts);
+              NIntro := ts;
+            end;
+
+            // 提取各话URL
+            sp := UTF8Pos(SSTRURLB, body);
+            while sp > 1 do
+            begin
+              UTF8Delete(body, 1, sp + UTF8Length(SSTRURLB) - 1);
+              ep := UTF8Pos(SSTRURLE, body);
+              if ep > 1 then
+              begin
+                ts := Copy(body, 1, ep - 1);
+                PageList.Add(URL + '/episodes/' + ts);
+                UTF8Delete(body, 1, ep + UTF8Length(SSTRURLE) - 1);
+                sp := UTF8Pos(SSTRURLB, body);
+              end else
+                Break;
+            end;
+            Result := True;
+          end;
+        end;
+      end;
+    end;
+  finally
+    r.Free;
+  end;
+end;
+
+var
+  i, j, k, epIdx, cnt: integer;
+  op, input, sel, fmtStr, outDir, epDir: string;
+  interactive, showDetail: Boolean;
+  selVols: array of Boolean;
+  volCount, totalEp: integer;
+  epHtml, epTitle, epBody, epXhtml: string;
+  epub: TEpubBuilder;
+  combineEpub: Boolean;
+  choseEpub: Boolean;
+  NovelTitle, NovelAuthor, FNBase: string;
+  CSBI: TConsoleScreenBufferInfo;
+  CCI: TConsoleCursorInfo;
+  hCOutput: THandle;
 
 begin
   Writeln('');
   Writeln('=========================================');
-  Writeln('  kakuyomudl  v4.93');
-  Writeln('  Kakuyomu 小说下载器 (青空文库格式)');
+  Writeln('  kakuyomudl  v4.94');
+  Writeln('  Kakuyomu 小说下载器 (EPUB / 青空文库)');
   Writeln('  (c) INOUE, masahiro / 汉化 by 1432647');
   Writeln('=========================================');
   Writeln('');
 
   interactive := (ParamCount = 0);
+  showDetail  := False;
+  combineEpub := True;
+  choseEpub   := True;
 
-  if interactive then
+  if not interactive then
   begin
-    repeat
-      Write('请输入小说作品URL: ');
-      ReadLn(URL);
-      URL := Trim(URL);
-    until UTF8Pos('https://kakuyomu.jp/works/', URL) = 1;
-
-    Write('起始章节序号 (直接回车从第1章开始): ');
-    ReadLn(input);
-    input := Trim(input);
-    if input <> '' then
-    begin
-      StartPage := input;
-      try
-        StartN := StrToInt(input);
-      except
-        Writeln('错误: 起始章节序号无效, 将从第1章开始.');
-        StartN := 0;
-      end;
-    end;
-  end
-  else begin
-    // 命令行模式 (兼容 Naro2mobi 调用)
-    StartN    := 0;
-    StartPage := '';
-
+    // 命令行模式
     for i := 0 to ParamCount - 1 do
     begin
       op := ParamStr(i + 1);
-      // Naro2mobi 窗口句柄
       if UTF8Pos('-h', op) = 1 then
       begin
         Delete(op, 1, 2);
-        try
-          hWnd := StrToInt(op);
-        except
-          Writeln('错误: Naro2mobi 句柄无效.');
-          ExitCode := -1;
-          Exit;
-        end;
-      // 起始章节
-      end else if UTF8Pos('-s', op) = 1 then
+        try hWnd := StrToInt(op); except end;
+      end
+      else if UTF8Pos('-s', op) = 1 then
       begin
         Delete(op, 1, 2);
         StartPage := op;
-        try
-          StartN := StrToInt(op);
-        except
-          Writeln('错误: 起始章节序号无效.');
-          ExitCode := -1;
-          Exit;
-        end;
-      // 作品URL
-      end else if UTF8Pos('https:', op) = 1 then
-      begin
-        URL := op;
-      // 保存文件名
-      end else begin
+        try StartN := StrToInt(op); except end;
+      end
+      else if UTF8Pos('-v', op) = 1 then
+        showDetail := True
+      else if UTF8Pos('https:', op) = 1 then
+        URL := op
+      else begin
         FileName := op;
         if UpperCase(ExtractFileExt(op)) <> '.TXT' then
           FileName := FileName + '.txt';
@@ -845,62 +1071,368 @@ begin
       ExitCode := -1;
       Exit;
     end;
+  end
+  else begin
+    // 交互模式
+    repeat
+      Write('请输入小说作品URL: ');
+      ReadLn(URL);
+      URL := Trim(URL);
+    until UTF8Pos('https://kakuyomu.jp/works/', URL) = 1;
+
+    Write('是否显示每话标题 (y/N): ');
+    ReadLn(input);
+    showDetail := (LowerCase(Trim(input)) = 'y');
   end;
 
   ExitCode  := 0;
+  StartN    := 0;
+  StartPage := '';
+  Path      := ExtractFilePath(ParamStr(0));
 
-  Path := ExtractFilePath(ParamStr(0));
-
-  Chapter := '';
+  // ===== 阶段1: 获取小说信息 =====
+  Writeln('');
   TextLine := GetHTML(URL);
-  if TextLine <> '' then
+  if TextLine = '' then
   begin
-    PageList := TStringList.Create;
-    TextPage := TStringList.Create;
-    LogFile  := TStringList.Create;
-    try
-      NvStat := GetNovelStatus(TextLine);
-      ParseChapter(TextLine);
-
-      if interactive then
-      begin
-        Write('输出文件名 (直接回车使用默认: ' + FileName + '): ');
-        ReadLn(input);
-        input := Trim(input);
-        if input <> '' then
-        begin
-          if UpperCase(ExtractFileExt(input)) <> '.TXT' then
-            input := input + '.txt';
-          FileName := Path + input;
-        end;
-      end;
-
-      if PageList.Count >= StartN then
-      begin
-        LoadEachPage;
-        try
-          TextPage.WriteBOM := True;
-          LogFile.WriteBOM  := True;
-          TextPage.SaveToFile(Filename, TEncoding.UTF8);
-          LogFile.SaveToFile(ChangeFileExt(FileName, '.log'), TEncoding.UTF8);
-          Writeln('');
-          Writeln('已保存至: ' + Filename);
-        except
-          ExitCode := -1;
-          Writeln('保存文件失败.');
-        end;
-      end else begin
-        Writeln('无法从 ' + URL + ' 获取小说信息.');
-        ExitCode := -1;
-      end;
-    finally
-      LogFile.Free;
-      PageList.Free;
-      TextPage.Free;
-    end;
-  end else begin
-    Writeln('无法从 ' + URL + ' 获取页面信息.');
+    Writeln('无法获取页面信息.');
     ExitCode := -1;
+    if interactive then begin Write('按回车键退出...'); ReadLn; end;
+    Exit;
+  end;
+
+  PageList := TStringList.Create;
+  try
+    NvStat := GetNovelStatus(TextLine);
+    if not ParseNovelInfo(TextLine) then
+    begin
+      Writeln('无法解析小说信息.');
+      PageList.Free;
+      if interactive then begin Write('按回车键退出...'); ReadLn; end;
+      Exit;
+    end;
+
+    NovelTitle := NTitle;
+    NovelAuthor := NAuthor;
+    FNBase := PathFilter(Restore2RealChar(NovelTitle));
+
+    Writeln('书名: ' + NovelTitle);
+    Writeln('作者: ' + NovelAuthor);
+    if NIntro <> '' then
+      Writeln('简介: ' + Copy(NIntro, 1, 80) + '...');
+    Writeln('共 ' + IntToStr(PageList.Count) + ' 话');
+    Writeln('');
+
+    if PageList.Count = 0 then
+    begin
+      Writeln('未找到任何章节.');
+      PageList.Free;
+      if interactive then begin Write('按回车键退出...'); ReadLn; end;
+      Exit;
+    end;
+
+    // ===== 阶段2: 扫描章节结构 =====
+    QuickScanEpisodes;
+
+    if GroupCount = 0 then
+    begin
+      Writeln('未检测到章节结构, 将全部下载.');
+      SetLength(ChapterGroups, 1);
+      ChapterGroups[0].Name := NovelTitle;
+      ChapterGroups[0].SubName := '';
+      ChapterGroups[0].EpCount := PageList.Count;
+      ChapterGroups[0].EpStart := 0;
+      GroupCount := 1;
+    end;
+
+    // ===== 阶段3: 展示卷列表并选择 =====
+    if interactive then
+    begin
+      Writeln('卷列表:');
+      for i := 0 to GroupCount - 1 do
+      begin
+        with ChapterGroups[i] do
+        begin
+          if Name <> '' then
+            Write('[' + IntToStr(i + 1) + '] ' + Name)
+          else
+            Write('[' + IntToStr(i + 1) + '] (无章节名)');
+
+          if SubName <> '' then
+            Write(' ' + SubName);
+
+          Writeln(' (' + IntToStr(EpCount) + '话)');
+
+          if showDetail then
+          begin
+            for j := EpStart to EpStart + EpCount - 1 do
+            begin
+              Writeln('      第' + IntToStr(j - EpStart + 1) + '话');
+            end;
+          end;
+        end;
+      end;
+      Writeln('[0] 全部选择');
+
+      if GroupCount > 1 then
+        Write('请选择要下载的卷 (如 1,3 或 1-3): ')
+      else
+        Write('直接回车下载全部: ');
+
+      ReadLn(sel);
+      sel := Trim(sel);
+
+      SetLength(selVols, GroupCount);
+      for i := 0 to GroupCount - 1 do
+        selVols[i] := False;
+
+      if (sel = '') or (sel = '0') then
+      begin
+        for i := 0 to GroupCount - 1 do
+          selVols[i] := True;
+      end
+      else begin
+        sel := ReplaceRegExpr('，', sel, ',');
+        sel := ReplaceRegExpr(' ', sel, ',');
+        // 处理逗号分隔和范围
+        input := sel + ',';
+        while UTF8Pos(',', input) > 0 do
+        begin
+          op := Copy(input, 1, UTF8Pos(',', input) - 1);
+          UTF8Delete(input, 1, UTF8Pos(',', input));
+
+          if UTF8Pos('-', op) > 0 then
+          begin
+            try
+              j := StrToInt(Copy(op, 1, UTF8Pos('-', op) - 1));
+              k := StrToInt(Copy(op, UTF8Pos('-', op) + 1, 99));
+              if j > k then begin cnt := j; j := k; k := cnt; end;
+              for cnt := j to k do
+                if (cnt >= 1) and (cnt <= GroupCount) then
+                  selVols[cnt - 1] := True;
+            except end;
+          end
+          else begin
+            try
+              cnt := StrToInt(op);
+              if (cnt >= 1) and (cnt <= GroupCount) then
+                selVols[cnt - 1] := True;
+            except end;
+          end;
+        end;
+      end;
+
+      // 计算选中话数
+      totalEp := 0;
+      for i := 0 to GroupCount - 1 do
+        if selVols[i] then
+          totalEp := totalEp + ChapterGroups[i].EpCount;
+      Writeln('已选择 ' + IntToStr(totalEp) + ' 话');
+    end
+    else begin
+      // 非交互模式: 选全部
+      SetLength(selVols, GroupCount);
+      for i := 0 to GroupCount - 1 do
+        selVols[i] := True;
+      totalEp := PageList.Count;
+    end;
+
+    // ===== 阶段4: 选择输出格式 =====
+    if interactive then
+    begin
+      Writeln('');
+      Writeln('选择输出格式:');
+      Writeln('[1] EPUB (推荐)');
+      Writeln('[2] TXT (青空文库)');
+      Write('请选择 (1/2): ');
+      ReadLn(input);
+      choseEpub := (Trim(input) <> '2');
+    end;
+
+    if choseEpub and interactive and (totalEp > 0) then
+    begin
+      // 计算选中了多少个卷
+      volCount := 0;
+      for i := 0 to GroupCount - 1 do
+        if selVols[i] then Inc(volCount);
+
+      if volCount > 1 then
+      begin
+        Writeln('');
+        Writeln('合并选项:');
+        Writeln('[1] 合并为单本 EPUB');
+        Writeln('[2] 按卷拆分为多本 EPUB');
+        Write('请选择 (1/2): ');
+        ReadLn(input);
+        combineEpub := (Trim(input) <> '2');
+      end;
+    end;
+
+    // ===== 阶段5: 创建输出目录 =====
+    outDir := Path + FNBase + '\';
+    ForceDirectories(outDir);
+
+    // ===== 阶段6: 下载并生成输出 =====
+    if totalEp > 0 then
+    begin
+      if combineEpub and choseEpub then
+      begin
+        // 单本 EPUB
+        epub := TEpubBuilder.Create(outDir + FNBase + '.epub');
+        epub.SetMetadata(NovelTitle, NovelAuthor, 'kakuyomu.jp', NIntro);
+      end
+      else
+        epub := nil;
+
+      cnt := PageList.Count;
+      epIdx := 0;
+      hCOutput := GetStdHandle(STD_OUTPUT_HANDLE);
+      GetConsoleScreenBufferInfo(hCOutput, CSBI);
+      GetConsoleCursorInfo(hCOutput, CCI);
+
+      Write('正在下载 [' + Format('%3d', [0]) + '/' + Format('%3d', [totalEp]) + ']');
+      CCI.bVisible := False;
+      SetConsoleCursorInfo(hCoutput, CCI);
+
+      for i := 0 to GroupCount - 1 do
+      begin
+        if not selVols[i] then Continue;
+
+        if (not combineEpub) and choseEpub then
+        begin
+          // 每卷独立 EPUB
+          if ChapterGroups[i].Name <> '' then
+            epDir := ChapterGroups[i].Name
+          else
+            epDir := 'Vol' + IntToStr(i + 1);
+          epDir := PathFilter(epDir);
+          epub := TEpubBuilder.Create(outDir + epDir + '.epub');
+          epub.SetMetadata(NovelTitle + ' - ' + ChapterGroups[i].Name,
+                           NovelAuthor, 'kakuyomu.jp', NIntro);
+        end;
+
+        for j := ChapterGroups[i].EpStart to ChapterGroups[i].EpStart + ChapterGroups[i].EpCount - 1 do
+        begin
+          epHtml := GetHTML(PageList[j]);
+          if epHtml = '' then Continue;
+
+          epHtml := ChangeAozoraTag(epHtml);
+
+          // 提取话标题
+          epTitle := '';
+          k := UTF8Pos(SEPISB, epHtml);
+          if k > 1 then
+          begin
+            UTF8Delete(epHtml, 1, k + UTF8Length(SEPISB) - 1);
+            k := UTF8Pos(SEPISE, epHtml);
+            if k > 1 then
+              epTitle := TrimSpace(Restore2RealChar(UTF8Copy(epHtml, 1, k - 1)));
+          end;
+          if epTitle = '' then
+            epTitle := '第' + IntToStr(j + 1) + '话';
+
+          // 删除标题段，提取正文
+          epHtml := GetHTML(PageList[j]);
+          epHtml := ChangeAozoraTag(epHtml);
+          k := UTF8Pos(SEPISB, epHtml);
+          if k > 1 then
+          begin
+            UTF8Delete(epHtml, 1, k + UTF8Length(SEPISB));
+            k := UTF8Pos(SEPISE, epHtml);
+            if k > 1 then
+              UTF8Delete(epHtml, 1, k + UTF8Length(SEPISE));
+          end;
+
+          epBody := '';
+          if UTF8Pos(SBODYB, epHtml) > 0 then
+          begin
+            k := UTF8Pos(SBODYB, epHtml);
+            UTF8Delete(epHtml, 1, k);
+            k := UTF8Pos(SBODYM, epHtml);
+            if k > 1 then UTF8Delete(epHtml, 1, k);
+            k := UTF8Pos(SBODYE, epHtml);
+            if k > 1 then epBody := UTF8Copy(epHtml, 1, k - 1);
+          end
+          else if UTF8Pos(SBODYB2, epHtml) > 0 then
+          begin
+            k := UTF8Pos(SBODYB2, epHtml);
+            UTF8Delete(epHtml, 1, k);
+            k := UTF8Pos(SBODYM, epHtml);
+            if k > 1 then UTF8Delete(epHtml, 1, k);
+            k := UTF8Pos(SBODYE, epHtml);
+            if k > 1 then epBody := UTF8Copy(epHtml, 1, k - 1);
+          end;
+
+          epBody := ChangeBRK(epBody);
+          epBody := ChangeImage(epBody);
+          epBody := Delete_href(epBody);
+          epBody := ChangeRuby(epBody);
+          epBody := ElimBodyTag(epBody);
+          epBody := Restore2RealChar(epBody);
+
+          if choseEpub then
+          begin
+            epXhtml := AozoraToXHTML(epBody);
+            if ChapterGroups[i].Name <> '' then
+              epub.AddChapter('[' + ChapterGroups[i].Name + '] ' + epTitle, epXhtml)
+            else
+              epub.AddChapter(epTitle, epXhtml);
+          end
+          else begin
+            if TextPage = nil then
+              TextPage := TStringList.Create;
+            if ChapterGroups[i].Name <> '' then
+            begin
+              TextPage.Add(AO_CPB + ChapterGroups[i].Name + AO_CPE);
+              if ChapterGroups[i].SubName <> '' then
+                TextPage.Add(AO_PRB + ChapterGroups[i].SubName + AO_PRE);
+            end;
+            TextPage.Add(AO_SEB + epTitle + AO_SEE);
+            TextPage.Add(epBody);
+            TextPage.Add('');
+            TextPage.Add(AO_PB2);
+          end;
+
+          Inc(epIdx);
+          SetConsoleCursorPosition(hCOutput, CSBI.dwCursorPosition);
+          Write('正在下载 [' + Format('%3d', [epIdx]) + '/' + Format('%3d', [totalEp]) + '] (' + Format('%d', [(epIdx * 100) div totalEp]) + '%)');
+          Sleep(400);
+        end;
+
+        if (not combineEpub) and choseEpub and (epub <> nil) then
+        begin
+          epub.Save;
+          Writeln('');
+          Writeln('已保存: ' + epub.OutputPath);
+          epub.Free;
+          epub := nil;
+        end;
+      end;
+
+      CCI.bVisible := True;
+      SetConsoleCursorInfo(hCoutput, CCI);
+      Writeln('');
+
+      if combineEpub and choseEpub and (epub <> nil) then
+      begin
+        epub.Save;
+        Writeln('已保存: ' + outDir + FNBase + '.epub');
+        epub.Free;
+      end;
+
+      if not choseEpub then
+      begin
+        // TXT 输出
+        TextPage.WriteBOM := True;
+        TextPage.SaveToFile(outDir + FNBase + '.txt', TEncoding.UTF8);
+        Writeln('已保存: ' + outDir + FNBase + '.txt');
+      end;
+    end;
+  finally
+    EpChapterNames.Free;
+    EpSubChapterNames.Free;
+    PageList.Free;
+    if TextPage <> nil then TextPage.Free;
   end;
 
   if interactive then
