@@ -234,10 +234,6 @@ begin
   Entry := TZipFileEntry(Z.Entries.Add);
   Entry.ArchiveFileName := ArchiveName;
   Entry.Stream := MS;
-  if not Compress then
-    Entry.CompressionLevel := TCompressionLevel(0)
-  else
-    Entry.CompressionLevel := TCompressionLevel(2);
 end;
 
 procedure TEpubBuilder.Save;
