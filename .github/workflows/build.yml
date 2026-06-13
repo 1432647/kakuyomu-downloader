@@ -1,0 +1,27 @@
+name: Build kakuyomudl
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lazarus
+        run: choco install lazarus --version=3.8 -y --no-progress
+
+      - name: Compile version resource
+        run: rc /r verinfo.rc
+
+      - name: Build (Release)
+        run: lazbuild --build-mode=Release kakuyomudl.lpi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kakuyomudl
+          path: kakuyomudl.exe
