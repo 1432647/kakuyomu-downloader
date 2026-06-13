@@ -1379,7 +1379,7 @@ begin
           end;
 
           // blank line or AO_PB2 = page break → end of episode body
-          if (input = '') or (UTF8Pos(AO_PB1, input) = 1) or (UTF8Pos(AO_PB2, input) = 1) then
+          if (input = '') or (UTF8Pos(AO_PB2, input) = 1) then
           begin
             if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
             begin
