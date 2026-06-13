@@ -25,6 +25,8 @@ type
     FCoverImage: string;
     FChapterTitles: TStringList;
     FChapterContents: TStringList;
+    FVolumes: TStringList;
+    FVolumeStarts: TStringList;
     FStreams: TList;
     FUID: string;
     function GenerateUUID: string;
@@ -39,6 +41,7 @@ type
     destructor Destroy; override;
     procedure SetMetadata(const ATitle, AAuthor, APublisher, ADescription: string);
     procedure AddChapter(const ATitle, AContent: string);
+    procedure AddVolumeChapter(const AVolTitle, AChTitle, AContent: string);
     procedure SetCover(const AImagePath: string);
     function ChapterCount: integer;
     property OutputPath: string read FFilePath;
@@ -57,6 +60,8 @@ begin
   FCoverImage := '';
   FChapterTitles := TStringList.Create;
   FChapterContents := TStringList.Create;
+  FVolumes := TStringList.Create;
+  FVolumeStarts := TStringList.Create;
   FStreams := TList.Create;
   FUID := GenerateUUID;
 end;
@@ -70,6 +75,8 @@ begin
   FStreams.Free;
   FChapterTitles.Free;
   FChapterContents.Free;
+  FVolumes.Free;
+  FVolumeStarts.Free;
   inherited;
 end;
 
@@ -93,6 +100,24 @@ procedure TEpubBuilder.AddChapter(const ATitle, AContent: string);
 begin
   FChapterTitles.Add(ATitle);
   FChapterContents.Add(AContent);
+end;
+
+procedure TEpubBuilder.AddVolumeChapter(const AVolTitle, AChTitle, AContent: string);
+var
+  idx: integer;
+begin
+  AddChapter(AChTitle, AContent);
+  idx := FChapterTitles.Count - 1;
+  if FVolumes.Count = 0 then
+  begin
+    FVolumes.Add(AVolTitle);
+    FVolumeStarts.Add(IntToStr(idx));
+  end
+  else if FVolumes[FVolumes.Count - 1] <> AVolTitle then
+  begin
+    FVolumes.Add(AVolTitle);
+    FVolumeStarts.Add(IntToStr(idx));
+  end;
 end;
 
 procedure TEpubBuilder.SetCover(const AImagePath: string);
@@ -141,9 +166,9 @@ begin
   for i := 0 to FChapterTitles.Count - 1 do
   begin
     manifest := manifest +
-      '    <item id="chapter' + IntToStr(i + 1) + '" href="chapter' + IntToStr(i + 1) + '.xhtml" media-type="application/xhtml+xml"/>' + #10;
+      '    <item id="ch' + IntToStr(i + 1) + '" href="ch' + IntToStr(i + 1) + '.xhtml" media-type="application/xhtml+xml"/>' + #10;
     spine := spine +
-      '    <itemref idref="chapter' + IntToStr(i + 1) + '"/>' + #10;
+      '    <itemref idref="ch' + IntToStr(i + 1) + '"/>' + #10;
   end;
 
   Result := '<?xml version="1.0" encoding="UTF-8"?>' + #10 +
@@ -173,19 +198,69 @@ end;
 
 function TEpubBuilder.BuildNCX: string;
 var
-  i: integer;
+  i, vi, vs, ve, playOrder: integer;
   navMap: string;
+  volTitle: string;
 begin
   navMap := '';
-  for i := 0 to FChapterTitles.Count - 1 do
+  playOrder := 1;
+
+  // volumeFirst[vi] = index of first chapter in volume vi
+  // volumeLast[vi]  = index after last chapter (or -1 for last volume = total)
+  for vi := 0 to FVolumes.Count - 1 do
   begin
-    navMap := navMap +
-      '    <navPoint id="navPoint-' + IntToStr(i + 1) + '" playOrder="' + IntToStr(i + 1) + '">' + #10 +
-      '      <navLabel>' + #10 +
-      '        <text>' + EscapeXML(FChapterTitles[i]) + '</text>' + #10 +
-      '      </navLabel>' + #10 +
-      '      <content src="chapter' + IntToStr(i + 1) + '.xhtml"/>' + #10 +
-      '    </navPoint>' + #10;
+    vs := StrToInt(FVolumeStarts[vi]);
+    if vi + 1 < FVolumes.Count then
+      ve := StrToInt(FVolumeStarts[vi + 1]) - 1
+    else
+      ve := FChapterTitles.Count - 1;
+
+    if vs > ve then Continue;
+
+    volTitle := FVolumes[vi];
+
+    if FVolumes.Count > 1 then
+    begin
+      // volume as parent navPoint
+      navMap := navMap +
+        '    <navPoint id="navVol-' + IntToStr(vi + 1) + '" playOrder="' + IntToStr(playOrder) + '">' + #10 +
+        '      <navLabel>' + #10 +
+        '        <text>' + EscapeXML(volTitle) + '</text>' + #10 +
+        '      </navLabel>' + #10 +
+        '      <content src="ch' + IntToStr(vs + 1) + '.xhtml"/>' + #10;
+      Inc(playOrder);
+    end;
+
+    for i := vs to ve do
+    begin
+      navMap := navMap +
+        '      <navPoint id="navPoint-' + IntToStr(i + 1) + '" playOrder="' + IntToStr(playOrder) + '">' + #10 +
+        '        <navLabel>' + #10 +
+        '          <text>' + EscapeXML(FChapterTitles[i]) + '</text>' + #10 +
+        '        </navLabel>' + #10 +
+        '        <content src="ch' + IntToStr(i + 1) + '.xhtml"/>' + #10 +
+        '      </navPoint>' + #10;
+      Inc(playOrder);
+    end;
+
+    if FVolumes.Count > 1 then
+      navMap := navMap + '    </navPoint>' + #10;
+  end;
+
+  if FVolumes.Count <= 1 then
+  begin
+    // flat structure: no volumes or single volume
+    for i := 0 to FChapterTitles.Count - 1 do
+    begin
+      navMap := navMap +
+        '    <navPoint id="navPoint-' + IntToStr(i + 1) + '" playOrder="' + IntToStr(playOrder) + '">' + #10 +
+        '      <navLabel>' + #10 +
+        '        <text>' + EscapeXML(FChapterTitles[i]) + '</text>' + #10 +
+        '      </navLabel>' + #10 +
+        '        <content src="ch' + IntToStr(i + 1) + '.xhtml"/>' + #10 +
+        '    </navPoint>' + #10;
+      Inc(playOrder);
+    end;
   end;
 
   Result := '<?xml version="1.0" encoding="UTF-8"?>' + #10 +
@@ -215,6 +290,7 @@ begin
     '  <title>' + EscapeXML(title) + '</title>' + #10 +
     '</head>' + #10 +
     '<body>' + #10 +
+    '<h2>' + EscapeXML(title) + '</h2>' + #10 +
     body + #10 +
     '</body>' + #10 +
     '</html>';
@@ -249,16 +325,14 @@ begin
     Z.FileName := FFilePath;
 
     AddStringToZip(Z, 'mimetype', 'application/epub+zip', False);
-
     AddStringToZip(Z, 'META-INF/container.xml', BuildContainerXML, True);
-
     AddStringToZip(Z, 'OEBPS/content.opf', BuildOPF, True);
     AddStringToZip(Z, 'OEBPS/toc.ncx', BuildNCX, True);
 
     for i := 0 to FChapterTitles.Count - 1 do
     begin
       xhtml := BuildXHTML(FChapterTitles[i], FChapterContents[i]);
-      AddStringToZip(Z, 'OEBPS/chapter' + IntToStr(i + 1) + '.xhtml', xhtml, True);
+      AddStringToZip(Z, 'OEBPS/ch' + IntToStr(i + 1) + '.xhtml', xhtml, True);
     end;
 
     Z.ZipAllFiles;

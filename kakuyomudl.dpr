@@ -870,6 +870,22 @@ begin
   Writeln(' 完成');
 end;
 
+// 全角数字 → 半角（解决部分 console 字体无法显示全角数字的问题）
+function FWVtoHalfWidth(const S: string): string;
+begin
+  Result := S;
+  Result := UTF8StringReplace(Result, '０', '0', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '１', '1', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '２', '2', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '３', '3', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '４', '4', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '５', '5', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '６', '6', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '７', '7', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '８', '8', [rfReplaceAll]);
+  Result := UTF8StringReplace(Result, '９', '9', [rfReplaceAll]);
+end;
+
 // 青空文库格式 → EPUB XHTML body 转换
 function AozoraToXHTML(const src: string): string;
 var
@@ -1020,7 +1036,7 @@ var
   interactive, showDetail: Boolean;
   selVols: array of Boolean;
   volCount, totalEp: integer;
-  epHtml, epTitle, epBody, epXhtml, work: string;
+  epHtml, epTitle, epBody, epXhtml, work, volTitle: string;
   r: TRegExpr;
   epub: TEpubBuilder;
   combineEpub: Boolean;
@@ -1161,12 +1177,12 @@ begin
         with ChapterGroups[i] do
         begin
           if Name <> '' then
-            Write('[' + IntToStr(i + 1) + '] ' + Name)
+            Write('[' + IntToStr(i + 1) + '] ' + FWVtoHalfWidth(Name))
           else
             Write('[' + IntToStr(i + 1) + '] (无章节名)');
 
           if SubName <> '' then
-            Write(' ' + SubName);
+            Write(' ' + FWVtoHalfWidth(SubName));
 
           Writeln(' (' + IntToStr(EpCount) + '话)');
 
@@ -1332,7 +1348,7 @@ begin
 
         epTitle := '';
         epBody := '';
-        k := 0;
+        volTitle := NovelTitle;
 
         for j := 0 to TextPage.Count - 1 do
         begin
@@ -1341,7 +1357,11 @@ begin
           // AO_CPB (［＃大見出し］) = chapter heading
           if UTF8Pos(AO_CPB, input) = 1 then
           begin
-            // new volume: if split, save previous EPUB and start new one
+            work := UTF8StringReplace(input, AO_CPB, '', [rfReplaceAll]);
+            work := UTF8StringReplace(work, AO_CPE, '', [rfReplaceAll]);
+            volTitle := Trim(work);
+
+            // split mode: create new EPUB per volume
             if (not combineEpub) and (epub <> nil) then
             begin
               epub.Save;
@@ -1352,13 +1372,11 @@ begin
 
             if not combineEpub then
             begin
-              work := UTF8StringReplace(input, AO_CPB, '', [rfReplaceAll]);
-              work := UTF8StringReplace(work, AO_CPE, '', [rfReplaceAll]);
-              work := PathFilter(Trim(work));
+              work := PathFilter(volTitle);
               if work <> '' then
               begin
                 epub := TEpubBuilder.Create(outDir + work + '.epub');
-                epub.SetMetadata(NovelTitle + ' - ' + Trim(work), NovelAuthor, 'kakuyomu.jp', NIntro);
+                epub.SetMetadata(NovelTitle + ' - ' + volTitle, NovelAuthor, 'kakuyomu.jp', NIntro);
               end;
             end;
             Continue;
@@ -1369,7 +1387,7 @@ begin
           begin
             // save previous episode
             if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
-              epub.AddChapter(epTitle, AozoraToXHTML(epBody));
+              epub.AddVolumeChapter(volTitle, epTitle, AozoraToXHTML(epBody));
 
             epTitle := UTF8StringReplace(input, AO_SEB, '', [rfReplaceAll]);
             epTitle := UTF8StringReplace(epTitle, AO_SEE, '', [rfReplaceAll]);
@@ -1382,7 +1400,7 @@ begin
           if UTF8Pos(AO_PB2, input) = 1 then
           begin
             if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
-              epub.AddChapter(epTitle, AozoraToXHTML(epBody));
+              epub.AddVolumeChapter(volTitle, epTitle, AozoraToXHTML(epBody));
             epTitle := '';
             epBody := '';
             Continue;
@@ -1396,7 +1414,7 @@ begin
 
         // last episode
         if (epTitle <> '') and (epBody <> '') and (epub <> nil) then
-          epub.AddChapter(epTitle, AozoraToXHTML(epBody));
+          epub.AddVolumeChapter(volTitle, epTitle, AozoraToXHTML(epBody));
 
         if (not combineEpub) and (epub <> nil) then
         begin
