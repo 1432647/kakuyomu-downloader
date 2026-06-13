@@ -33,4 +33,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kakuyomudl
-          path: kakuyomudl.exe
+          path: lib\x86_64-win64\kakuyomudl.exe
