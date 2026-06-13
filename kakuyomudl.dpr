@@ -839,6 +839,10 @@ begin
       ChapterGroups[0].EpStart := 0;
       GroupCount := 1;
     end
+    else if (ch1 = '') and (ch2 = '') then
+    begin
+      ChapterGroups[GroupCount - 1].EpCount := ChapterGroups[GroupCount - 1].EpCount + 1;
+    end
     else if (ChapterGroups[GroupCount - 1].Name = ch1) and
             (ChapterGroups[GroupCount - 1].SubName = ch2) then
     begin
