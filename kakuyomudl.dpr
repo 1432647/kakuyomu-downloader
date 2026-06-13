@@ -536,7 +536,7 @@ begin
             TextPage.Add(AO_PB2);
           end;
 				end else
-          Writeln(subt + ' から本文を抽出出来ませんでした.');
+           Writeln(subt + ' 无法提取正文内容.');
 			finally
         r.Free;
 			end;
@@ -557,7 +557,7 @@ begin
   hCOutput := GetStdHandle(STD_OUTPUT_HANDLE);
   GetConsoleScreenBufferInfo(hCOutput, CSBI);
   GetConsoleCursorInfo(hCOutput, CCI);
-  Write('各話を取得中 [  0/' + Format('%3d', [cnt]) + ']');
+  Write('正在获取各章节 [  0/' + Format('%3d', [cnt]) + ']');
   CCI.bVisible := False;
   SetConsoleCursorInfo(hCoutput, CCI);
   if StartN > 0 then
@@ -575,10 +575,10 @@ begin
     begin
       ParsePage(line);
       SetConsoleCursorPosition(hCOutput, CSBI.dwCursorPosition);
-      Write('各話を取得中 [' + Format('%3d', [i + 1]) + '/' + Format('%3d', [cnt]) + '(' + Format('%d', [(n * 100) div sc]) + '%)]');
+      Write('正在获取各章节 [' + Format('%3d', [i + 1]) + '/' + Format('%3d', [cnt]) + '(' + Format('%d', [(n * 100) div sc]) + '%)]');
       if hWnd <> 0 then
         SendMessage(hWnd, WM_DLINFO, n, 1);
-      // ダウンロードを安定させるために0.5秒のインターバルを入れる
+      // 下载间隔，减轻服务器负担
       Sleep(400);   // サーバーへの負担を減らすため、200 -> 400に変更 2024/7/10
     end;
     Inc(i);
@@ -600,7 +600,7 @@ var
   r: TRegExpr;
   conhdl: THandle;
 begin
-  Write('小説情報を取得中 ' + URL + ' ... ');
+  Write('正在获取小说信息 ' + URL + ' ... ');
   r := TRegExpr.Create;
   try
     // 必要部分だけを切り取る
@@ -721,7 +721,7 @@ begin
               end else
                 Break;
             end;
-            Writeln(IntToStr(PageList.Count) + ' 話の情報を取得しました.');
+            Writeln('已获取 ' + IntToStr(PageList.Count) + ' 个章节信息.');
             // Naro2mobiから呼び出された場合は進捗状況をSendする
             if hWnd <> 0 then
             begin
@@ -760,69 +760,96 @@ end;
 
 var
   i: integer;
-  op: string;
+  op, input: string;
+  interactive: Boolean;
 
 begin
-  if ParamCount = 0 then
-  begin
-    Writeln('');
-    Writeln('kakuyomudl ver4.93 2026/4/11 (c) INOUE, masahiro.');
-    Writeln('  使用方法');
-    Writeln('  kakuyomudl [-sDL開始ページ番号] 小説トップページのURL [保存するファイル名(省略するとタイトル名で保存します)]');
-    Exit;
-  end;
-  ExitCode  := 0;
-  hWnd      := 0;
-  StartN    := 0;  // 開始ページ番号(0スタート)
-  FileName  := '';
-  StartPage := '';
+  Writeln('');
+  Writeln('=========================================');
+  Writeln('  kakuyomudl  v4.93');
+  Writeln('  Kakuyomu 小说下载器 (青空文库格式)');
+  Writeln('  (c) INOUE, masahiro / 汉化 by 1432647');
+  Writeln('=========================================');
+  Writeln('');
 
-  Path := ExtractFilePath(ParamStr(0));
-  // オプション引数取得
-  for i := 0 to ParamCount - 1 do
+  interactive := (ParamCount = 0);
+
+  if interactive then
   begin
-    op := ParamStr(i + 1);
-    // Naro2mobiのWindowsハンドル
-    if UTF8Pos('-h', op) = 1 then
+    repeat
+      Write('请输入小说作品URL: ');
+      ReadLn(URL);
+      URL := Trim(URL);
+    until UTF8Pos('https://kakuyomu.jp/works/', URL) = 1;
+
+    Write('起始章节序号 (直接回车从第1章开始): ');
+    ReadLn(input);
+    input := Trim(input);
+    if input <> '' then
     begin
-      Delete(op, 1, 2);
+      StartPage := input;
       try
-        hWnd := StrToInt(op);
+        StartN := StrToInt(input);
       except
-        Writeln('Error: Invalid Naro2mobi Handle.');
-        ExitCode := -1;
-        Exit;
+        Writeln('错误: 起始章节序号无效, 将从第1章开始.');
+        StartN := 0;
       end;
-    // DL開始ページ番号
-    end else if UTF8Pos('-s', op) = 1 then
+    end;
+  end
+  else begin
+    // 命令行模式 (兼容 Naro2mobi 调用)
+    StartN    := 0;
+    StartPage := '';
+
+    for i := 0 to ParamCount - 1 do
     begin
-      Delete(op, 1, 2);
-      StartPage := op;
-      try
-        StartN := StrToInt(op);
-      except
-        Writeln('Error: Invalid Start Page Number.');
-        ExitCode := -1;
-        Exit;
+      op := ParamStr(i + 1);
+      // Naro2mobi 窗口句柄
+      if UTF8Pos('-h', op) = 1 then
+      begin
+        Delete(op, 1, 2);
+        try
+          hWnd := StrToInt(op);
+        except
+          Writeln('错误: Naro2mobi 句柄无效.');
+          ExitCode := -1;
+          Exit;
+        end;
+      // 起始章节
+      end else if UTF8Pos('-s', op) = 1 then
+      begin
+        Delete(op, 1, 2);
+        StartPage := op;
+        try
+          StartN := StrToInt(op);
+        except
+          Writeln('错误: 起始章节序号无效.');
+          ExitCode := -1;
+          Exit;
+        end;
+      // 作品URL
+      end else if UTF8Pos('https:', op) = 1 then
+      begin
+        URL := op;
+      // 保存文件名
+      end else begin
+        FileName := op;
+        if UpperCase(ExtractFileExt(op)) <> '.TXT' then
+          FileName := FileName + '.txt';
       end;
-    // 作品URL
-    end else if UTF8Pos('https:', op) = 1 then
+    end;
+
+    if UTF8Pos('https://kakuyomu.jp/works/', URL) = 0 then
     begin
-      URL := op;
-    // それ以外であれば保存ファイル名
-    end else begin
-      FileName := op;
-      if UpperCase(ExtractFileExt(op)) <> '.TXT' then
-        FileName := FileName + '.txt';
+      Writeln('URL 不正确, 必须以 https://kakuyomu.jp/works/ 开头.');
+      ExitCode := -1;
+      Exit;
     end;
   end;
 
-  if UTF8Pos('https://kakuyomu.jp/works/', URL) = 0 then
-  begin
-    Writeln('小説のURLが違います.');
-    ExitCode := -1;
-    Exit;
-  end;
+  ExitCode  := 0;
+
+  Path := ExtractFilePath(ParamStr(0));
 
   Chapter := '';
   TextLine := GetHTML(URL);
@@ -832,23 +859,38 @@ begin
     TextPage := TStringList.Create;
     LogFile  := TStringList.Create;
     try
-      NvStat := GetNovelStatus(TextLine);       // 小説の連載状況を取得
-      ParseChapter(TextLine);                    // 小説の目次情報を取得
+      NvStat := GetNovelStatus(TextLine);
+      ParseChapter(TextLine);
+
+      if interactive then
+      begin
+        Write('输出文件名 (直接回车使用默认: ' + FileName + '): ');
+        ReadLn(input);
+        input := Trim(input);
+        if input <> '' then
+        begin
+          if UpperCase(ExtractFileExt(input)) <> '.TXT' then
+            input := input + '.txt';
+          FileName := Path + input;
+        end;
+      end;
+
       if PageList.Count >= StartN then
       begin
-        LoadEachPage;                           // 小説各話情報を取得
+        LoadEachPage;
         try
-          TextPage.WriteBOM := True;  // DelphiとLazarusでデフォルトの定義が違うため明示的に指定する
+          TextPage.WriteBOM := True;
           LogFile.WriteBOM  := True;
           TextPage.SaveToFile(Filename, TEncoding.UTF8);
           LogFile.SaveToFile(ChangeFileExt(FileName, '.log'), TEncoding.UTF8);
-          Writeln(Filename + ' に保存しました.');
+          Writeln('');
+          Writeln('已保存至: ' + Filename);
         except
           ExitCode := -1;
-          Writeln('ファイルの保存に失敗しました.');
+          Writeln('保存文件失败.');
         end;
       end else begin
-        Writeln(URL + 'から小説情報を取得できませんでした.');
+        Writeln('无法从 ' + URL + ' 获取小说信息.');
         ExitCode := -1;
       end;
     finally
@@ -857,7 +899,14 @@ begin
       TextPage.Free;
     end;
   end else begin
-    Writeln(URL + 'からページ情報を取得できませんでした.');
+    Writeln('无法从 ' + URL + ' 获取页面信息.');
     ExitCode := -1;
+  end;
+
+  if interactive then
+  begin
+    Writeln('');
+    Write('按回车键退出...');
+    ReadLn;
   end;
 end.
