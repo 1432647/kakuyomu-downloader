@@ -9,9 +9,9 @@ interface
 
 uses
   {$IFDEF FPC}
-  Classes, SysUtils, LazUTF8, zipper,
+  Classes, SysUtils, LazUTF8, zipper;
   {$ELSE}
-  System.Classes, System.SysUtils, LazUTF8wrap, zipper,
+  System.Classes, System.SysUtils, LazUTF8wrap, zipper;
   {$ENDIF}
 
 type
