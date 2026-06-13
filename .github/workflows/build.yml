@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Lazarus
-        run: choco install lazarus --version=3.8 -y --no-progress
+        run: choco install lazarus -y --no-progress --limit-output
 
       - name: Compile version resource
         run: rc /r verinfo.rc
