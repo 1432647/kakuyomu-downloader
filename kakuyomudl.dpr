@@ -1,6 +1,8 @@
 ﻿(*
   カクヨム小説ダウンローダー[kakuyomudl]
 
+  4.96 2026/06/18  クイックモードで章構造スキャンを省略しDLを高速化
+                  （章見出しは本文取得時に埋め込まれるためEPUB階層は維持される）
   4.95 2026/06/18  クイックモード追加: URL入力後すぐに全話ダウンロード＆単一EPUB統合
                   -i オプションで従来の対話式選択モード（巻選択・形式選択など）に切替可能
   4.93 2026/04/11 &#x??;エンコードされた文字コードポイントのデコード方法を修正した
@@ -1053,7 +1055,7 @@ var
 begin
   Writeln('');
   Writeln('=========================================');
-  Writeln('  kakuyomudl  v4.95');
+  Writeln('  kakuyomudl  v4.96');
   Writeln('  Kakuyomu 小说下载器 (EPUB / 青空文库)');
   Writeln('  (c) INOUE, masahiro / 汉化 by 1432647');
   Writeln('=========================================');
@@ -1166,7 +1168,10 @@ begin
     end;
 
     // ===== 阶段2: 扫描章节结构 =====
-    QuickScanEpisodes;
+    // クイックモードでは章構造のスキャンを省略（全話DL・単一EPUB統合のため不要）。
+    // 章見出しは ParsePage がDL時にAO_CPBタグとして本文に埋め込むので、EPUB階層は保たれる。
+    if not quickMode then
+      QuickScanEpisodes;
 
     if GroupCount = 0 then
     begin
