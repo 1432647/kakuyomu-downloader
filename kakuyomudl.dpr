@@ -906,7 +906,9 @@ begin
 
   // 青空文库 ルビ → XHTML ruby
   // ｜かんじ《よみ》 → <ruby>かんじ<rt>よみ</rt></ruby>
-  tmp := ReplaceRegExpr('([^《]*?)《([^》]*?)》', tmp, '<ruby>$1<rt>$2</rt></ruby>', True);
+  // ベース・読みとも改行を含めない。含めると別段落の《読み》まで
+  // ベースが伸び、<ruby>タグが改行で分断されて不正XHTMLになる。
+  tmp := ReplaceRegExpr('([^《' + #$0D + #$0A + ']*?)《([^》' + #$0D + #$0A + ']*?)》', tmp, '<ruby>$1<rt>$2</rt></ruby>', True);
   // 去掉青空文库格式标签
   tmp := ReplaceRegExpr('［＃[^］]*］', tmp, '');
   // ｜ 去残留
