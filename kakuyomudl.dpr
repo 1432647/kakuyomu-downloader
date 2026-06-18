@@ -1,6 +1,8 @@
 ﻿(*
   カクヨム小説ダウンローダー[kakuyomudl]
 
+  4.95 2026/06/18  クイックモード追加: URL入力後すぐに全話ダウンロード＆単一EPUB統合
+                  -i オプションで従来の対話式選択モード（巻選択・形式選択など）に切替可能
   4.93 2026/04/11 &#x??;エンコードされた文字コードポイントのデコード方法を修正した
   4.92 2026/04/09 ログファイルの見出しをna6dlと同じ書式に統一した
                   本文の<br />を改行コードに変えていたが、カクヨムページでは無視されているようなので
@@ -1035,7 +1037,7 @@ end;
 var
   i, j, k, epIdx, cnt: integer;
   op, input, sel, fmtStr, outDir, epDir: string;
-  interactive, showDetail: Boolean;
+  interactive, showDetail, quickMode: Boolean;
   selVols: array of Boolean;
   volCount, totalEp: integer;
   epHtml, epTitle, epBody, epXhtml, work, volTitle: string;
@@ -1051,13 +1053,14 @@ var
 begin
   Writeln('');
   Writeln('=========================================');
-  Writeln('  kakuyomudl  v4.94');
+  Writeln('  kakuyomudl  v4.95');
   Writeln('  Kakuyomu 小说下载器 (EPUB / 青空文库)');
   Writeln('  (c) INOUE, masahiro / 汉化 by 1432647');
   Writeln('=========================================');
   Writeln('');
 
   interactive := (ParamCount = 0);
+  quickMode   := True;   // クイックモード: URL入力後すぐに全話DL＆単一EPUB統合
   showDetail  := False;
   combineEpub := True;
   choseEpub   := True;
@@ -1072,6 +1075,12 @@ begin
       begin
         Delete(op, 1, 2);
         try hWnd := StrToInt(op); except end;
+      end
+      else if UTF8Pos('-i', op) = 1 then
+      begin
+        // 旧対話式選択モードへ切替（巻選択・形式選択などを表示）
+        interactive := True;
+        quickMode := False;
       end
       else if UTF8Pos('-s', op) = 1 then
       begin
@@ -1089,25 +1098,25 @@ begin
           FileName := FileName + '.txt';
       end;
     end;
+  end;
 
-    if UTF8Pos('https://kakuyomu.jp/works/', URL) = 0 then
-    begin
-      Writeln('URL 不正确, 必须以 https://kakuyomu.jp/works/ 开头.');
-      ExitCode := -1;
-      Exit;
-    end;
-  end
-  else begin
-    // 交互模式
+  // -i 付きでURL未指定、またはダブルクリック起動の場合はURL入力を促す
+  if interactive and (UTF8Length(URL) = 0) then
+  begin
     repeat
       Write('请输入小说作品URL: ');
       ReadLn(URL);
       URL := Trim(URL);
     until UTF8Pos('https://kakuyomu.jp/works/', URL) = 1;
+  end;
 
-    Write('是否显示每话标题 (y/N): ');
-    ReadLn(input);
-    showDetail := (LowerCase(Trim(input)) = 'y');
+  // URL妥当性チェック
+  if UTF8Pos('https://kakuyomu.jp/works/', URL) = 0 then
+  begin
+    Writeln('URL 不正确, 必须以 https://kakuyomu.jp/works/ 开头.');
+    ExitCode := -1;
+    if interactive then begin Write('按回车键退出...'); ReadLn; end;
+    Exit;
   end;
 
   ExitCode  := 0;
@@ -1171,7 +1180,7 @@ begin
     end;
 
     // ===== 阶段3: 展示卷列表并选择 =====
-    if interactive then
+    if interactive and not quickMode then
     begin
       Writeln('卷列表:');
       for i := 0 to GroupCount - 1 do
@@ -1255,7 +1264,7 @@ begin
       Writeln('已选择 ' + IntToStr(totalEp) + ' 话');
     end
     else begin
-      // 非交互模式: 选全部
+      // 非交互模式 或 クイックモード: 选全部
       SetLength(selVols, GroupCount);
       for i := 0 to GroupCount - 1 do
         selVols[i] := True;
@@ -1263,7 +1272,7 @@ begin
     end;
 
     // ===== 阶段4: 选择输出格式 =====
-    if interactive then
+    if interactive and not quickMode then
     begin
       Writeln('');
       Writeln('选择输出格式:');
@@ -1274,7 +1283,7 @@ begin
       choseEpub := (Trim(input) <> '2');
     end;
 
-    if choseEpub and interactive and (totalEp > 0) then
+    if choseEpub and interactive and not quickMode and (totalEp > 0) then
     begin
       // 计算选中了多少个卷
       volCount := 0;
